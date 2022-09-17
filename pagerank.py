@@ -104,7 +104,10 @@ class WebGraph():
 
         else:
             v = torch.zeros(n)
-            # FIXME: implement Task 2
+            for i in range(n):
+                url = self._index_to_url(i)
+                if url_satisfies_query(url,query):
+                    v[i] = 1
         
         v_sum = torch.sum(v)
         assert(v_sum>0)
@@ -116,12 +119,16 @@ class WebGraph():
     def power_method(self, v=None, x0=None, alpha=0.85, max_iterations=1000, epsilon=1e-6):
         '''
         This function implements the power method for computing the pagerank.
-
         The self.P variable stores the $P$ matrix.
         You will have to compute the $a$ vector and implement Equation 5.1 from "Deeper Inside Pagerank."
         '''
         with torch.no_grad():
             n = self.P.shape[0]
+
+            # Calculate a
+            nondangling_nodes = torch.sparse.sum(self.P,1).indices()
+            a = torch.ones([n,1])
+            a[nondangling_nodes] = 0
 
             # create variables if none given
             if v is None:
@@ -139,13 +146,15 @@ class WebGraph():
             x = xprev.detach().clone()
             for i in range(max_iterations):
                 xprev = x.detach().clone()
-
-                # compute the new x vector using Eq (5.1)
-                # FIXME: Task 1
-                # HINT: this can be done with a single call to the `torch.sparse.addmm` function,
-                # but you'll have to read the code above to figure out what variables should get passed to that function
-                # and what pre/post processing needs to be done to them
-
+                q = (alpha*x.t()@a + (1-alpha)) * v.t()
+                x = torch.sparse.addmm(
+                        q.t(),
+                        self.P.t(),
+                        x,
+                        beta=1,
+                        alpha=alpha
+                        )
+                x /= torch.norm(x)
                 # output debug information
                 residual = torch.norm(x-xprev)
                 logging.debug(f'i={i} residual={residual}')
@@ -185,7 +194,6 @@ def url_satisfies_query(url, query):
     But, if a word is preceded by the negation sign `-`,
     then the function returns False if that word is present in the url,
     even if it would otherwise return True.
-
     >>> url_satisfies_query('www.lawfareblog.com/covid-19-speech', 'covid')
     True
     >>> url_satisfies_query('www.lawfareblog.com/covid-19-speech', 'coronavirus covid')
