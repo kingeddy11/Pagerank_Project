@@ -11,6 +11,9 @@ import gzip
 import csv
 
 import logging
+import gensim.downloader
+vectors = gensim.downloader.load('glove-wiki-gigaword-300')
+p = 35
 
 
 class WebGraph():
@@ -167,25 +170,68 @@ class WebGraph():
             return x.squeeze()
 
 
-    def search(self, pi, query='', max_results=10):
+    def search(self, pi, query='', max_results=10, p = 35):
         '''
         Logs all urls that match the query.
         Results are displayed in sorted order according to the pagerank vector pi.
         '''
         n = self.P.shape[0]
         vals,indices = torch.topk(pi,n)
+        
+        
+        urls = [self._index_to_url(index.item()) for index in indices]
+        pagerank = [val.item() for val in vals]
 
+        scores = []
+
+        similar_words = []
+        for term in query.split():
+            if term[0] != '-':
+                similar_words += get_similar_words(term, add_score=True)
+
+        if query == '':
+            scores = pagerank
+
+        else:
+            for i, url in enumerate(urls):
+                score = 0
+                for word_vector in similar_words:
+                    word = word_vector[0]
+                    word_similarity = word_vector[1]
+                    new_n = url.count(word)
+                    score += new_n*(word_similarity**p)
+
+                ranking = pagerank[i] * score
+                scores.append(ranking)
+
+        url_score = list(zip(urls, scores))
+        url_score.sort(key=lambda x: x[1], reverse=True)
+        
         matches = 0
         for i in range(n):
             if matches >= max_results:
                 break
-            index = indices[i].item()
-            url = self._index_to_url(index)
-            pagerank = vals[i].item()
+            url = url_score[i][0]
             if url_satisfies_query(url,query):
-                logging.info(f'rank={matches} pagerank={pagerank:0.4e} url={url}')
+                ranking = url_score[i][1]
+                logging.info(f'rank={matches} ranking={ranking:0.4e} url={url}')
                 matches += 1
 
+
+def get_similar_words(term, n=5, add_score=False):
+    '''
+    Returns a list of the n most similar word vectors.
+    '''	
+    similar_words_v = vectors.most_similar(term)[:n]
+
+    similar_words = []
+    if not add_score:
+        for similar_word_v in similar_words_v:
+            similar_words.append(similar_word_v[0])
+    else: 
+        return similar_words_v
+
+    return similar_words
 
 def url_satisfies_query(url, query):
     '''
@@ -218,8 +264,12 @@ def url_satisfies_query(url, query):
     for term in terms:
         if term[0] != '-':
             num_terms+=1
+            similar_terms = get_similar_words(term)
             if term in url:
                 satisfies = True
+            for similar_term in similar_terms:
+                if similar_term in url:
+                    satisfies = True
     if num_terms==0:
         satisfies=True
 
